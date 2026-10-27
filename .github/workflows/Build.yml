@@ -1,53 +1,138 @@
-{
-  "name": "Build Buddy APK",
-  "on": [
-    "push",
-    "workflow_dispatch"
-  ],
-  "permissions": {
-    "contents": "write"
-  },
-  "jobs": {
-    "build": {
-      "runs-on": "ubuntu-latest",
-      "steps": [
-        {
-          "name": "Checkout repository",
-          "uses": "actions/checkout@v4"
-        },
-        {
-          "name": "Prepare Android Gradle Project",
-          "run": "set -e\nmkdir -p /tmp/extracted_buddy\nfor z in *.zip; do\n  if [ -f \"$z\" ]; then unzip -oq \"$z\" -d /tmp/extracted_buddy || true; fi\ndone\nmkdir -p app/src/main/assets app/src/main/java/com/buddy/aicompanion app/src/main/res/values\nHTML_FILE=$(find /tmp/extracted_buddy . -name \"*.html\" | head -n 1)\nif [ -n \"$HTML_FILE\" ]; then\n  cp -f \"$HTML_FILE\" app/src/main/assets/index.html\nelse\n  echo \"<!DOCTYPE html><html><body style=\"background:#0D1017;color:#5CE1E6;font-family:sans-serif;text-align:center;padding:40px;\"><h1>Buddy AI Companion</h1></body></html>\" > app/src/main/assets/index.html\nfi\nprintf 'pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\\nrootProject.name = \"BuddyAICompanion\"\\ninclude(\":app\")\\n' > settings.gradle.kts\nprintf 'plugins { id(\"com.android.application\") version \"8.2.2\" apply false; id(\"org.jetbrains.kotlin.android\") version \"1.9.22\" apply false }\\n' > build.gradle.kts\nprintf 'org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\\nandroid.useAndroidX=true\\n' > gradle.properties\nprintf 'plugins { id(\"com.android.application\"); id(\"org.jetbrains.kotlin.android\") }\\nandroid {\\n  namespace = \"com.buddy.aicompanion\"\\n  compileSdk = 34\\n  defaultConfig { applicationId = \"com.buddy.aicompanion\"; minSdk = 24; targetSdk = 34; versionCode = 1; versionName = \"1.0.0\" }\\n  signingConfigs { getByName(\"debug\") { } }\\n  buildTypes { getByName(\"release\") { isMinifyEnabled = false; isShrinkResources = false; signingConfig = signingConfigs.getByName(\"debug\") } }\\n  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }\\n  kotlinOptions { jvmTarget = \"17\" }\\n}\\ndependencies { implementation(\"androidx.webkit:webkit:1.10.0\") }\\n' > app/build.gradle.kts\nprintf '<?xml version=\"1.0\" encoding=\"utf-8\"?>\\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\\n  <uses-permission android:name=\"android.permission.INTERNET\" />\\n  <uses-permission android:name=\"android.permission.RECORD_AUDIO\" />\\n  <uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\" />\\n  <uses-permission android:name=\"android.permission.USE_BIOMETRIC\" />\\n  <uses-permission android:name=\"android.permission.VIBRATE\" />\\n  <application android:allowBackup=\"false\" android:label=\"Buddy AI Companion\" android:supportsRtl=\"true\" android:usesCleartextTraffic=\"false\" android:theme=\"@android:style/Theme.DeviceDefault.NoActionBar\">\\n    <activity android:name=\".MainActivity\" android:exported=\"true\" android:configChanges=\"orientation|screenSize|keyboardHidden\">\\n      <intent-filter><action android:name=\"android.intent.action.MAIN\" /><category android:name=\"android.intent.action.LAUNCHER\" /></intent-filter>\\n    </activity>\\n  </application>\\n</manifest>\\n' > app/src/main/AndroidManifest.xml\nprintf 'package com.buddy.aicompanion\\nimport android.annotation.SuppressLint\\nimport android.app.Activity\\nimport android.content.pm.PackageManager\\nimport android.os.Bundle\\nimport android.view.WindowManager\\nimport android.webkit.PermissionRequest\\nimport android.webkit.WebChromeClient\\nimport android.webkit.WebSettings\\nimport android.webkit.WebView\\nimport android.webkit.WebViewClient\\nclass MainActivity : Activity() {\\n  private lateinit var webView: WebView\\n  @SuppressLint(\"SetJavaScriptEnabled\")\\n  override fun onCreate(savedInstanceState: Bundle?) {\\n    super.onCreate(savedInstanceState)\\n    window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)\\n    webView = WebView(this)\\n    setContentView(webView)\\n    webView.settings.apply { javaScriptEnabled = true; domStorageEnabled = true; mediaPlaybackRequiresUserGesture = false; allowFileAccess = true; allowContentAccess = false; cacheMode = WebSettings.LOAD_DEFAULT }\\n    webView.webViewClient = WebViewClient()\\n    webView.webChromeClient = object : WebChromeClient() { override fun onPermissionRequest(request: PermissionRequest?) { request?.grant(request.resources) } }\\n    if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 101) }\\n    webView.loadUrl(\"file:///android_asset/index.html\")\\n  }\\n  override fun onBackPressed() { if (this::webView.isInitialized && webView.canGoBack()) webView.goBack() else super.onBackPressed() }\\n}\\n' > app/src/main/java/com/buddy/aicompanion/MainActivity.kt\nls -la settings.gradle.kts build.gradle.kts app/build.gradle.kts app/src/main/assets/index.html"
-        },
-        {
-          "name": "Set up JDK 17",
-          "uses": "actions/setup-java@v4",
-          "with": {
-            "java-version": "17",
-            "distribution": "temurin"
+name: Build Buddy APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      # The previous failure: the runner's default Gradle (9.8.1) is too new for
+      # Android Gradle Plugin 8.2.2. Pin a compatible Gradle version instead.
+      - name: Setup Gradle 8.5
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.5"
+
+      - name: Locate and prepare project
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/extracted
+          for z in *.zip; do
+            [ -f "$z" ] && unzip -oq "$z" -d /tmp/extracted || true
+          done
+
+          SETTINGS=$(find /tmp/extracted -name settings.gradle.kts 2>/dev/null | head -n 1 || true)
+          if [ -n "$SETTINGS" ]; then
+            PROJ=$(dirname "$SETTINGS")
+          elif [ -f settings.gradle.kts ]; then
+            PROJ="$GITHUB_WORKSPACE"
+          else
+            echo "ERROR: no Android project found (no zip with settings.gradle.kts, none at repo root)"
+            exit 1
+          fi
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+          echo "Project directory: $PROJ"
+          cd "$PROJ"
+
+          # --- Fill in files the project is missing ---
+          mkdir -p app/src/main/res/xml app/src/main/res/values
+
+          [ -f app/src/main/res/xml/data_extraction_rules.xml ] || cat > app/src/main/res/xml/data_extraction_rules.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <data-extraction-rules>
+              <cloud-backup>
+                  <exclude domain="sharedpref" path="." />
+                  <exclude domain="database" path="." />
+              </cloud-backup>
+              <device-transfer>
+                  <exclude domain="sharedpref" path="." />
+                  <exclude domain="database" path="." />
+              </device-transfer>
+          </data-extraction-rules>
+          EOF
+
+          [ -f app/src/main/res/xml/network_security_config.xml ] || cat > app/src/main/res/xml/network_security_config.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="false">
+                  <trust-anchors>
+                      <certificates src="system" />
+                  </trust-anchors>
+              </base-config>
+          </network-security-config>
+          EOF
+
+          # MainActivity extends AppCompatActivity, which crashes at launch
+          # unless the app uses an AppCompat theme.
+          cat > app/src/main/res/values/themes.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="Theme.Buddy" parent="Theme.AppCompat.DayNight.NoActionBar">
+                  <item name="android:windowBackground">#07080C</item>
+              </style>
+          </resources>
+          EOF
+
+          MANIFEST=app/src/main/AndroidManifest.xml
+          sed -i 's|android:theme="@android:style/Theme.DeviceDefault.NoActionBar"|android:icon="@mipmap/ic_launcher" android:theme="@style/Theme.Buddy"|' "$MANIFEST"
+          # Fix a wrong launcher category if present (it would hide the app icon)
+          sed -i 's|android.intent.action.LAUNCHER|android.intent.category.LAUNCHER|' "$MANIFEST"
+
+          # Keep the WebView JavaScript bridge from being stripped by R8
+          cat > app/proguard-rules.pro <<'EOF'
+          -keepattributes JavascriptInterface
+          -keepclassmembers class com.buddy.aicompanion.MainActivity$AndroidBiometricBridge {
+              @android.webkit.JavascriptInterface <methods>;
           }
-        },
-        {
-          "name": "Setup Gradle",
-          "uses": "gradle/actions/setup-gradle@v3"
-        },
-        {
-          "name": "Build Signed APK",
-          "run": "gradle assembleRelease --no-daemon && cp app/build/outputs/apk/release/app-release.apk ./Buddy-AI-Companion.apk"
-        },
-        {
-          "name": "Save APK to Repository Root",
-          "run": "git config user.name \"github-actions[bot]\" && git config user.email \"github-actions[bot]@users.noreply.github.com\" && git add Buddy-AI-Companion.apk && (git diff --staged --quiet || git commit -m \"Add compiled Buddy-AI-Companion.apk\") && git push"
-        },
-        {
-          "name": "Upload Installable APK Artifact",
-          "uses": "actions/upload-artifact@v4",
-          "with": {
-            "name": "Buddy-Installable-APK",
-            "path": "Buddy-AI-Companion.apk"
-          }
-        }
-      ]
-    }
-  }
-}
+          -keep class com.buddy.aicompanion.MainActivity { public void promptNativeBiometric(); }
+          EOF
+
+          # Release keystore (generated here because it is not in the zip)
+          if [ ! -f app/buddy-release-key.jks ]; then
+            keytool -genkeypair -v \
+              -keystore app/buddy-release-key.jks \
+              -alias buddy-key -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass BuddyLove2026 -keypass BuddyLove2026 \
+              -dname "CN=Buddy AI, O=Buddy, C=IN"
+          fi
+
+          echo "--- manifest ---"
+          cat "$MANIFEST"
+
+      - name: Build signed release APK
+        run: |
+          set -euo pipefail
+          cd "$PROJ"
+          gradle --version
+          gradle assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/Buddy-AI-Companion.apk"
+          ls -la "$GITHUB_WORKSPACE/Buddy-AI-Companion.apk"
+
+      - name: Upload installable APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Buddy-Installable-APK
+          path: Buddy-AI-Companion.apk
+
+      - name: Save APK to repository root
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Buddy-AI-Companion.apk
+          git diff --staged --quiet || git commit -m "Add compiled Buddy-AI-Companion.apk"
+          git push
